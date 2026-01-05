@@ -1,0 +1,59 @@
+{
+  "title": "Stateful Scenes",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Stateful Scenes",
+        "description": "Creates a switch for each YAML-defined scene and keeps the switch ON when the scene's entities match the scene.\n\nIf you choose a file or directory source, enter its path in 'Scene Path'.",
+        "data": {
+          "source": "Scene Source",
+          "scene_file": "Scene Path",
+          "settle_time": "Settle Time",
+          "number_tolerance": "Number Tolerance",
+          "ignore_unavailable": "Ignore Unavailable",
+          "exclude_circadian_controls": "Exclude Circadian Controls",
+          "circadian_pattern": "Circadian Pattern"
+        },
+        "data_description": {
+          "source": "Where to load scene YAML from. Default is from configuration.yaml.",
+          "scene_file": "Scene file or directory path (ignored when loading from configuration.yaml).",
+          "settle_time": "Seconds to keep a scene optimistically active after it is turned on before verifying entity states.",
+          "number_tolerance": "Allowed difference when comparing numeric attributes (brightness 0-255, position, etc.).",
+          "ignore_unavailable": "Ignore entities that are 'unavailable' or 'unknown' instead of marking the scene inactive.",
+          "exclude_circadian_controls": "Exclude entities matching the circadian pattern from matching and turn-off.",
+          "circadian_pattern": "Glob pattern(s) to exclude (comma-separated). Default: switch.circadian_lighting*"
+        }
+      }
+    },
+    "error": {
+      "source_not_found": "The selected scene source could not be found.",
+      "source_invalid": "The selected scene source could not be parsed as scene YAML."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Stateful Scenes Options",
+        "description": "Adjust how scene matching works.",
+        "data": {
+          "source": "Scene Source",
+          "scene_file": "Scene Path",
+          "settle_time": "Settle Time",
+          "number_tolerance": "Number Tolerance",
+          "ignore_unavailable": "Ignore Unavailable",
+          "exclude_circadian_controls": "Exclude Circadian Controls",
+          "circadian_pattern": "Circadian Pattern"
+        },
+        "data_description": {
+          "source": "Where to load scene YAML from. Default is from configuration.yaml.",
+          "scene_file": "Scene file or directory path (ignored when loading from configuration.yaml).",
+          "settle_time": "Seconds to keep a scene optimistically active after it is turned on before verifying entity states.",
+          "number_tolerance": "Allowed difference when comparing numeric attributes (brightness 0-255, position, etc.).",
+          "ignore_unavailable": "Ignore entities that are 'unavailable' or 'unknown' instead of marking the scene inactive.",
+          "exclude_circadian_controls": "Exclude entities matching the circadian pattern from matching and turn-off.",
+          "circadian_pattern": "Glob pattern(s) to exclude (comma-separated). Default: switch.circadian_lighting*"
+        }
+      }
+    }
+  }
+}

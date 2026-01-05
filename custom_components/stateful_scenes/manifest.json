@@ -1,0 +1,13 @@
+{
+  "domain": "stateful_scenes",
+  "name": "Stateful Scenes",
+  "codeowners": [
+    "@avariorss"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/avariorss/stateful_scenes",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/avariorss/stateful_scenes/issues",
+  "requirements": [],
+  "version": "2.3.2"
+}

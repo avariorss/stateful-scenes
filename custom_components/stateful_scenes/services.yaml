@@ -1,0 +1,11 @@
+reload:
+  name: Reload
+  description: Reload Stateful Scenes (re-read scene definitions and rebuild switches).
+  fields:
+    entry_id:
+      name: Entry ID
+      description: Optional config entry ID to reload; if omitted, all Stateful Scenes entries are reloaded.
+      required: false
+      example: "0123456789abcdef"
+      selector:
+        text:
