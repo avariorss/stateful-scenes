@@ -1,19 +1,20 @@
-"""Stateful Scenes integration (simplified rewrite).
+"""Stateful Scenes integration.
 
 Creates one switch entity per YAML-defined scene.
 
-- The scene is *activated* via the underlying Home Assistant scene entity
+- Turning the switch *on* activates the underlying Home Assistant scene
   (scene.turn_on).
-- The switch state reflects whether all entities in the scene match the
-  scene definition.
+- The switch state reflects whether the scene is currently *active* (i.e., all
+  member entities match the scene's desired state/attributes).
 
-This rewrite is designed to be more predictable and to handle paths correctly
-relative to Home Assistant's config directory.
+This integration is designed to be predictable, event-driven, and to resolve
+paths relative to Home Assistant's config directory.
 """
 
 from __future__ import annotations
 
 import logging
+from typing import Any, Callable
 
 import voluptuous as vol
 
@@ -57,15 +58,35 @@ SERVICE_RELOAD = "reload"
 SERVICE_SCHEMA = vol.Schema({vol.Optional("entry_id"): str})
 
 
+def _domain_data(hass: HomeAssistant) -> dict[str, Any]:
+    """Return (and initialise) the domain data structure."""
+
+    data = hass.data.setdefault(DOMAIN, {})
+    data.setdefault("entries", {})
+    return data
+
+
+def _entry_opt(entry: ConfigEntry, key: str, default: Any) -> Any:
+    """Read an option with graceful fallback to entry.data."""
+
+    if key in (entry.options or {}):
+        return entry.options[key]
+    if key in (entry.data or {}):
+        return entry.data[key]
+    return default
+
+
 async def async_setup(hass: HomeAssistant, _config: ConfigType) -> bool:
     """Set up the integration domain."""
-    hass.data.setdefault(DOMAIN, {})
+
+    _domain_data(hass)
     return True
 
 
 def _ensure_reload_service_registered(hass: HomeAssistant) -> None:
     """Register a reload service once for this domain."""
-    data = hass.data.setdefault(DOMAIN, {})
+
+    data = _domain_data(hass)
     if data.get("_reload_service_registered"):
         return
 
@@ -74,6 +95,7 @@ def _ensure_reload_service_registered(hass: HomeAssistant) -> None:
         if entry_id:
             await hass.config_entries.async_reload(entry_id)
             return
+
         for entry in hass.config_entries.async_entries(DOMAIN):
             await hass.config_entries.async_reload(entry.entry_id)
 
@@ -92,61 +114,73 @@ async def _async_cleanup_orphan_entities(
     valid_unique_ids = {f"{entry_id}:{scene_id}" for scene_id in scene_ids}
 
     # Copy to list() since we may mutate the registry.
-    for entry in list(ent_reg.entities.values()):
-        if entry.config_entry_id != entry_id:
+    for reg_entry in list(ent_reg.entities.values()):
+        if reg_entry.config_entry_id != entry_id:
             continue
-        if entry.platform != DOMAIN:
+        if reg_entry.platform != DOMAIN:
             continue
-        unique_id = entry.unique_id
+        unique_id = reg_entry.unique_id
         if not unique_id or not unique_id.startswith(f"{entry_id}:"):
             continue
         if unique_id not in valid_unique_ids:
             _LOGGER.debug(
                 "Removing orphan entity from registry: %s (unique_id=%s)",
-                entry.entity_id,
+                reg_entry.entity_id,
                 unique_id,
             )
-            ent_reg.async_remove(entry.entity_id)
+            ent_reg.async_remove(reg_entry.entity_id)
 
 
-def _build_scene_entity_resolver(hass: HomeAssistant):
-    """Build a fast resolver from YAML scenes to HA scene entity_ids.
+def _build_scene_entity_resolver(hass: HomeAssistant) -> Callable[[ParsedScene], str | None]:
+    """Resolve a YAML scene definition to a Home Assistant scene entity_id.
 
-    Important nuance from Home Assistant docs: YAML-defined scenes only *require*
-    `name` and `entities` and do not require an `id`. So we cannot rely on
-    `state.attributes["id"]` being present. We try several strategies:
+    YAML-defined scenes do *not* require an explicit `id`, so we cannot rely on
+    `state.attributes["id"]` being present. We try:
 
-    1) Match by `attributes["id"]` if present (covers cases where an id exists).
-    2) Direct entity_id guess from the scene name/slug (common case: scene.<slug>).
-    3) Match by friendly name.
+    1) Match by attributes["id"], if present.
+    2) Guess entity_id from scene id / name (scene.<slug>).
+    3) Match by friendly_name.
 
-    Returns None if no match is found.
-
-    We precompute maps once to avoid O(N^2) scans when many scenes exist.
+    The resolver caches state-derived maps for speed, but will refresh the cache
+    once on a miss (helps when scenes load/reload after the integration starts).
     """
 
-    scene_states = hass.states.async_all("scene")
-    entity_ids = {st.entity_id for st in scene_states}
-    id_to_eid: dict[str, str] = {}
-    name_to_eid: dict[str, str] = {}
-    for st in scene_states:
-        sid = st.attributes.get("id")
-        if isinstance(sid, str) and sid:
-            id_to_eid[sid] = st.entity_id
-        fn = st.attributes.get("friendly_name")
-        if isinstance(fn, str) and fn:
-            name_to_eid[fn.strip().casefold()] = st.entity_id
+    cache: dict[str, Any] = {}
 
-    def _resolve(scene: ParsedScene) -> str | None:
+    def _rebuild() -> None:
+        scene_states = hass.states.async_all("scene")
+        cache["entity_ids"] = {st.entity_id for st in scene_states}
+
+        id_to_eid: dict[str, str] = {}
+        name_to_eid: dict[str, str] = {}
+        for st in scene_states:
+            sid = st.attributes.get("id")
+            if isinstance(sid, str) and sid:
+                id_to_eid[sid] = st.entity_id
+
+            fn = st.attributes.get("friendly_name")
+            if isinstance(fn, str) and fn:
+                name_to_eid[fn.strip().casefold()] = st.entity_id
+
+        cache["id_to_eid"] = id_to_eid
+        cache["name_to_eid"] = name_to_eid
+
+    _rebuild()
+
+    def _resolve_once(scene: ParsedScene) -> str | None:
+        entity_ids: set[str] = cache.get("entity_ids", set())
+        id_to_eid: dict[str, str] = cache.get("id_to_eid", {})
+        name_to_eid: dict[str, str] = cache.get("name_to_eid", {})
+
         # 1) Match by attributes["id"] (if present)
         if scene.scene_id and scene.scene_id in id_to_eid:
             return id_to_eid[scene.scene_id]
 
-        # 2) Guess entity_id (YAML examples typically become scene.<slugified name>)
+        # 2) Guess entity_id (YAML scenes usually become scene.<slugified name>)
         candidates: list[str] = []
         if scene.scene_id:
             candidates.append(f"scene.{slugify(scene.scene_id)}")
-            candidates.append(f"scene.{scene.scene_id}")  # if already slugified
+            candidates.append(f"scene.{scene.scene_id}")  # already slugified
         if scene.name:
             candidates.append(f"scene.{slugify(scene.name)}")
 
@@ -161,37 +195,42 @@ def _build_scene_entity_resolver(hass: HomeAssistant):
 
         return None
 
+    def _resolve(scene: ParsedScene) -> str | None:
+        resolved = _resolve_once(scene)
+        if resolved is not None:
+            return resolved
+
+        # Cache miss: scenes may have loaded after we built maps.
+        _rebuild()
+        return _resolve_once(scene)
+
     return _resolve
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Stateful Scenes from a config entry."""
 
-    hass.data.setdefault(DOMAIN, {})
-
+    data = _domain_data(hass)
     _ensure_reload_service_registered(hass)
 
-    source = entry.options.get(CONF_SOURCE, entry.data.get(CONF_SOURCE, DEFAULT_SOURCE))
-    scene_file = entry.options.get(CONF_SCENE_FILE, entry.data.get(CONF_SCENE_FILE, DEFAULT_SCENE_FILE))
-    scene_dir = entry.options.get(CONF_SCENE_DIR, entry.data.get(CONF_SCENE_DIR, DEFAULT_SCENE_DIR))
-    exclude_circadian = bool(entry.options.get(CONF_EXCLUDE_CIRCADIAN, entry.data.get(CONF_EXCLUDE_CIRCADIAN, DEFAULT_EXCLUDE_CIRCADIAN)))
-    circadian_pattern = str(entry.options.get(CONF_CIRCADIAN_PATTERN, entry.data.get(CONF_CIRCADIAN_PATTERN, DEFAULT_CIRCADIAN_PATTERN)))
-    # Back-compat: allow a single path field to act as the directory too.
+    source = _entry_opt(entry, CONF_SOURCE, DEFAULT_SOURCE)
+    scene_file = _entry_opt(entry, CONF_SCENE_FILE, DEFAULT_SCENE_FILE)
+    scene_dir = _entry_opt(entry, CONF_SCENE_DIR, DEFAULT_SCENE_DIR)
+    exclude_circadian = bool(_entry_opt(entry, CONF_EXCLUDE_CIRCADIAN, DEFAULT_EXCLUDE_CIRCADIAN))
+    circadian_pattern = str(_entry_opt(entry, CONF_CIRCADIAN_PATTERN, DEFAULT_CIRCADIAN_PATTERN))
+
+    # Back-compat: allow the UI's single path field to act as a directory path.
     if source == SOURCE_SCENE_DIR and (not scene_dir) and scene_file:
         scene_dir = scene_file
 
-
     opts = MatchOptions(
-        number_tolerance=int(entry.options.get(CONF_NUMBER_TOLERANCE, entry.data.get(CONF_NUMBER_TOLERANCE, DEFAULT_NUMBER_TOLERANCE))),
-        ignore_unavailable=bool(entry.options.get(CONF_IGNORE_UNAVAILABLE, entry.data.get(CONF_IGNORE_UNAVAILABLE, DEFAULT_IGNORE_UNAVAILABLE))),
-        # NOTE: ignore_attributes is intentionally NOT exposed in the UI.
-        # It's kept in code for advanced/manual tweaks, but it's usually too
-        # blunt (it can make very different states look "matching").
-        ignore_attributes=bool(entry.options.get(CONF_IGNORE_ATTRIBUTES, entry.data.get(CONF_IGNORE_ATTRIBUTES, DEFAULT_IGNORE_ATTRIBUTES))),
+        number_tolerance=int(_entry_opt(entry, CONF_NUMBER_TOLERANCE, DEFAULT_NUMBER_TOLERANCE)),
+        ignore_unavailable=bool(_entry_opt(entry, CONF_IGNORE_UNAVAILABLE, DEFAULT_IGNORE_UNAVAILABLE)),
+        # NOTE: ignore_attributes is intentionally not exposed in the UI.
+        ignore_attributes=bool(_entry_opt(entry, CONF_IGNORE_ATTRIBUTES, DEFAULT_IGNORE_ATTRIBUTES)),
     )
 
-    # "Settle Time" is the total optimistic window after a scene is turned on.
-    settle_time = float(entry.options.get(CONF_SETTLE_TIME, entry.data.get(CONF_SETTLE_TIME, DEFAULT_SETTLE_TIME)))
+    settle_time = float(_entry_opt(entry, CONF_SETTLE_TIME, DEFAULT_SETTLE_TIME))
 
     scenes = await async_load_scenes(
         hass,
@@ -202,20 +241,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     _LOGGER.info("Loaded %d YAML scene definitions from source=%s", len(scenes), source)
 
-    resolver = _build_scene_entity_resolver(hass)
     mgr = SceneManager(
         hass,
         scenes,
         opts,
         settle_time=settle_time,
-        resolve_scene_entity_id=resolver,
+        resolve_scene_entity_id=_build_scene_entity_resolver(hass),
         exclude_circadian=exclude_circadian,
         circadian_pattern=circadian_pattern,
     )
 
     await mgr.async_start()
 
-    hass.data[DOMAIN][entry.entry_id] = mgr
+    data["entries"][entry.entry_id] = mgr
 
     # Cleanup orphan entities (e.g. when scenes were removed/renamed).
     await _async_cleanup_orphan_entities(hass, entry.entry_id, set(mgr.scenes.keys()))
@@ -236,7 +274,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
-    mgr: SceneManager | None = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+    mgr: SceneManager | None = _domain_data(hass).get("entries", {}).pop(entry.entry_id, None)
     if mgr is not None:
         await mgr.async_stop()
 

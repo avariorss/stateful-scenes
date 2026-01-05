@@ -195,3 +195,7 @@ This is ideal if you have a custom scene editor/creator: update files → call r
 Example automation action:
 ```yaml
 service: stateful_scenes.reload
+# Optional: reload just one integration entry
+# data:
+#   entry_id: "0123456789abcdef"
+```

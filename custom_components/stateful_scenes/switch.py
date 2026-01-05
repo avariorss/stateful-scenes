@@ -29,12 +29,9 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    mgr: SceneManager = hass.data[DOMAIN][entry.entry_id]
+    mgr: SceneManager = hass.data[DOMAIN]["entries"][entry.entry_id]
 
-    entities = [
-        StatefulSceneSwitch(mgr, entry, scene_id)
-        for scene_id in mgr.scenes.keys()
-    ]
+    entities = [StatefulSceneSwitch(mgr, entry, scene_id) for scene_id in mgr.scenes]
     async_add_entities(entities)
 
 
@@ -56,6 +53,13 @@ class StatefulSceneSwitch(SwitchEntity):
         # Cache tracked entities for attributes to avoid rebuilding on every state write
         self._tracked_entities = list(self._def.entities.keys())
 
+        # Present a single device for the integration to avoid device-registry clutter.
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name="Stateful Scenes",
+            manufacturer="Stateful Scenes",
+        )
+
     async def async_added_to_hass(self) -> None:
         self._mgr.register_entity(self._scene_id, self)
 
@@ -67,15 +71,6 @@ class StatefulSceneSwitch(SwitchEntity):
         return self._mgr.is_scene_active(self._scene_id)
 
     @property
-    def device_info(self) -> DeviceInfo:
-        # Present a single device for the integration to avoid device-registry clutter.
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.entry_id)},
-            name="Stateful Scenes",
-            manufacturer="Stateful Scenes",
-        )
-
-    @property
     def extra_state_attributes(self):
         ha_scene_eid = self._mgr.get_ha_scene_entity_id(self._scene_id)
         return {
@@ -85,10 +80,9 @@ class StatefulSceneSwitch(SwitchEntity):
         }
 
     async def async_turn_on(self, **kwargs) -> None:
-        """Activate the underlying Home Assistant scene and mark switch optimistic."""
+        """Activate the underlying Home Assistant scene."""
         await self._mgr.async_activate_scene(self._scene_id)
 
     async def async_turn_off(self, **kwargs) -> None:
         """Turn off all member entities in the scene."""
         await self._mgr.async_turn_off_scene(self._scene_id)
-

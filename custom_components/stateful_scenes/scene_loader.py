@@ -1,11 +1,11 @@
 """Load scene definitions for Stateful Scenes.
 
-We use Home Assistant's YAML loader so the standard include tags work
+We use Home Assistant's YAML loader so standard include tags work
 (!include, !include_dir_merge_list, etc.).
 
-This integration only supports YAML scene items that contain an `entities:`
-mapping. Scenes provided by other platforms (Hue, ZHA groups-as-scenes, etc.)
-do not expose enough detail to reliably infer a target state, so we skip them.
+Only YAML scene items that contain an `entities:` mapping are supported.
+Platform-provided scenes (Hue, ZHA, etc.) do not expose enough detail to
+reliably infer a target state, so they are skipped.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from homeassistant.core import HomeAssistant
-
 from homeassistant.util import slugify
 from homeassistant.util.yaml import load_yaml
 
@@ -47,15 +46,7 @@ class ParsedScene:
 
 
 def _normalize_entity_expectation(value: Any) -> dict[str, Any]:
-    """Normalize a per-entity scene value into a dict.
-
-    HA's scene YAML accepts either:
-    - a mapping with optional `state:` plus attributes
-    - sometimes a scalar state (e.g. "on" / "off")
-
-    We normalize everything to a dict. If no explicit state is present, the
-    scene is treated as 'attributes only' for that entity.
-    """
+    """Normalize a per-entity scene value into a dict."""
 
     if value is None:
         return {}
@@ -69,7 +60,7 @@ def _normalize_entity_expectation(value: Any) -> dict[str, Any]:
             return {"state": "on" if value else "off"}
         return {"state": str(value)}
 
-    # Fallback
+    # Fallback (best-effort)
     return {"state": str(value)}
 
 
@@ -93,7 +84,7 @@ def _parse_scene_items(items: Iterable[Any]) -> list[ParsedScene]:
         if isinstance(raw_id, str) and raw_id.strip():
             scene_id = raw_id.strip()
         else:
-            scene_id = slugify(name)
+            scene_id = slugify(name) or f"scene_{len(scenes) + 1}"
 
         icon = item.get(KEY_ICON) if isinstance(item.get(KEY_ICON), str) else None
 
@@ -115,10 +106,30 @@ def _parse_scene_items(items: Iterable[Any]) -> list[ParsedScene]:
     return scenes
 
 
+def _dedupe_scenes(scenes: list[ParsedScene]) -> list[ParsedScene]:
+    """Drop duplicate scene_ids to prevent entity registry collisions."""
+
+    seen: set[str] = set()
+    out: list[ParsedScene] = []
+    for s in scenes:
+        if s.scene_id in seen:
+            _LOGGER.warning(
+                "Duplicate scene id '%s' encountered; only the first will be used", s.scene_id
+            )
+            continue
+        seen.add(s.scene_id)
+        out.append(s)
+    return out
+
+
 def _load_yaml_file(path: str | os.PathLike[str]) -> Any:
     """Blocking YAML loader (run in executor)."""
 
     return load_yaml(path)
+
+
+def _resolve_path(hass: HomeAssistant, path: str) -> str:
+    return path if os.path.isabs(path) else hass.config.path(path)
 
 
 async def async_load_scenes(
@@ -144,11 +155,10 @@ async def async_load_scenes(
             return []
 
         if isinstance(raw_scenes, list):
-            return _parse_scene_items(raw_scenes)
+            return _dedupe_scenes(_parse_scene_items(raw_scenes))
 
-        # Sometimes people define scene config as a dict (rare). Treat as single item.
         if isinstance(raw_scenes, dict):
-            return _parse_scene_items([raw_scenes])
+            return _dedupe_scenes(_parse_scene_items([raw_scenes]))
 
         raise ScenesSourceInvalid("scene section in configuration.yaml is not list/dict")
 
@@ -156,12 +166,7 @@ async def async_load_scenes(
         if not scene_file:
             raise ScenesSourceNotFound("No scene_file configured")
 
-        # Resolve relative paths against HA's config dir
-        path = (
-            scene_file
-            if os.path.isabs(scene_file)
-            else hass.config.path(scene_file)
-        )
+        path = _resolve_path(hass, scene_file)
         if not os.path.exists(path):
             raise ScenesSourceNotFound(f"Scene file not found: {path}")
 
@@ -170,11 +175,10 @@ async def async_load_scenes(
             return []
 
         if isinstance(raw, list):
-            return _parse_scene_items(raw)
+            return _dedupe_scenes(_parse_scene_items(raw))
 
         if isinstance(raw, dict):
-            # Allow a single-scene file
-            return _parse_scene_items([raw])
+            return _dedupe_scenes(_parse_scene_items([raw]))
 
         raise ScenesSourceInvalid(f"Scene file did not parse to list/dict: {path}")
 
@@ -182,7 +186,7 @@ async def async_load_scenes(
         if not scene_dir:
             raise ScenesSourceNotFound("No scene_dir configured")
 
-        dir_path = scene_dir if os.path.isabs(scene_dir) else hass.config.path(scene_dir)
+        dir_path = _resolve_path(hass, scene_dir)
         p = Path(dir_path)
         if not p.exists() or not p.is_dir():
             raise ScenesSourceNotFound(f"Scene directory not found: {dir_path}")
@@ -199,6 +203,6 @@ async def async_load_scenes(
             else:
                 _LOGGER.warning("Skipping %s (not list/dict)", file_path)
 
-        return _parse_scene_items(scene_items)
+        return _dedupe_scenes(_parse_scene_items(scene_items))
 
     raise ScenesSourceInvalid(f"Unknown source: {source}")
