@@ -1,4 +1,4 @@
-# Stateful Scenes (Avario fork)
+# Stateful Scenes
 
 Home Assistant scenes are *stateless*: you can activate them, but they don’t naturally tell you “I’m currently active”. This integration adds that missing piece by creating a **stateful `switch` entity for every YAML scene** and keeping those switches synchronized with the real-time states of the entities inside each scene.
 
@@ -30,8 +30,8 @@ Matching also includes these **global rules**:
 ### How updates happen (event-driven, efficient)
 The integration is **event-driven**, not polling:
 
-- It builds an index of **which scenes depend on which entities**.
-- Whenever any entity in a scene changes, only the scenes that reference that entity are re-evaluated.
+- It builds an index of **which scenes depend on which entities** (after applying any exclusion patterns).
+- Whenever an included entity changes, only the scenes that reference that entity are re-evaluated.
 - Evaluation is optimized using per-scene counters (so a single entity change is an O(1) update and “active?” can be decided quickly).
 
 ### Why there’s a “Settle Time”
@@ -41,6 +41,7 @@ Scene activation/deactivation often triggers a burst of state changes:
 - zigbee devices report out-of-order
 
 To prevent the stateful switch from flapping, the integration uses a **Settle Time** grace window:
+
 - When a scene is activated (either via the switch or via `scene.turn_on` elsewhere), the switch is set **optimistically ON**.
 - The integration waits **Settle Time** seconds before doing strict matching.
 - A small retry/hysteresis is used to reduce a brief OFF blip right at the end of the settle window.
@@ -151,6 +152,7 @@ Glob-style match (supports comma-separated patterns). Examples:
 
 ### Turning ON a stateful scene switch
 When you turn ON `switch.<scene>`:
+
 1. The integration calls `scene.turn_on` for the corresponding HA scene.
 2. The switch is set **optimistically ON** immediately.
 3. After **Settle Time**, the integration evaluates the real states and keeps ON/OFF accordingly.
@@ -161,9 +163,10 @@ If you activate `scene.<scene>` directly (automation/UI):
 
 ### Turning OFF a stateful scene switch
 When you turn OFF `switch.<scene>`:
-1. The integration calls `homeassistant.turn_off` for all scene entities
-2. Entities matching the exclusion pattern (e.g., circadian) are skipped
-3. The scene is **suppressed** from bouncing back ON during the Settle Time window
+
+1. The integration calls `homeassistant.turn_off` for all **included** scene entities.
+2. Entities matching the exclusion pattern (e.g., circadian controls) are skipped.
+3. The scene is suppressed from bouncing back ON during the Settle Time window while devices turn off.
 4. After the window, the switch reflects the true “active” status:
    - Normal scenes should remain OFF
    - “All-off” scenes can show ON again if they match by definition (e.g., a scene that means “everything off”)
