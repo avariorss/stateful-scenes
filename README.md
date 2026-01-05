@@ -13,13 +13,16 @@ This fork is optimized for **fast runtime matching**, supports **scenes loaded f
 ## Algorithm overview
 
 ### What “active” means
-A scene is considered **active** when, for every entity in the scene:
+A scene is considered **active** when, for every (non-excluded) entity in the scene:
 
 1. The entity’s current **state** matches the scene’s desired state (`on`, `off`, etc.)
-2. Any attributes specified in the scene YAML (e.g., brightness, color_temp, position) match the entity’s current attributes, with:
-   - numeric tolerance
-   - optional handling for unavailable/unknown entities
-   - optional exclusion patterns (e.g., circadian controls)
+2. Any attributes specified in the scene YAML (e.g., brightness, color_temp, position) match the entity’s current attributes.
+
+Matching also includes these **global rules**:
+
+- **Numeric tolerance:** Numeric attributes (brightness, position, etc.) are considered a match if they differ by no more than the configured tolerance.
+- **Unavailable handling:** If enabled, entities that are `unavailable` or `unknown` are ignored rather than causing the whole scene to be inactive.
+- **Entity exclusions (e.g. circadian):** If enabled, entities matching the configured pattern are excluded entirely from both matching and the “turn off” action.
 
 **Special rule (important):**
 - If the scene expects `state: off` and the entity is currently `off`, attributes are treated as satisfied (to avoid false negatives and unnecessary strictness when something is off).
