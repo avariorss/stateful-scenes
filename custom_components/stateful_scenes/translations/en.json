@@ -18,7 +18,7 @@
           "source": "Where to load scene YAML from. Default is from configuration.yaml.",
           "scene_file": "Scene file or directory path (ignored when loading from configuration.yaml).",
           "settle_time": "Seconds to keep a scene optimistically active after it is turned on before verifying entity states.",
-          "number_tolerance": "Allowed difference when comparing numeric attributes (brightness 0-255, position, etc.).",
+          "number_tolerance": "Allowed difference when comparing numeric attributes (brightness, position, etc.).",
           "ignore_unavailable": "Ignore entities that are 'unavailable' or 'unknown' instead of marking the scene inactive.",
           "exclude_circadian_controls": "Exclude entities matching the circadian pattern from matching and turn-off.",
           "circadian_pattern": "Glob pattern(s) to exclude (comma-separated). Default: switch.circadian_lighting*"
@@ -48,7 +48,7 @@
           "source": "Where to load scene YAML from. Default is from configuration.yaml.",
           "scene_file": "Scene file or directory path (ignored when loading from configuration.yaml).",
           "settle_time": "Seconds to keep a scene optimistically active after it is turned on before verifying entity states.",
-          "number_tolerance": "Allowed difference when comparing numeric attributes (brightness 0-255, position, etc.).",
+          "number_tolerance": "Allowed difference when comparing numeric attributes (brightness, position, etc.).",
           "ignore_unavailable": "Ignore entities that are 'unavailable' or 'unknown' instead of marking the scene inactive.",
           "exclude_circadian_controls": "Exclude entities matching the circadian pattern from matching and turn-off.",
           "circadian_pattern": "Glob pattern(s) to exclude (comma-separated). Default: switch.circadian_lighting*"

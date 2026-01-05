@@ -54,11 +54,11 @@ Similarly, when a scene switch is turned **OFF**, the integration applies a supp
 
 For each YAML scene, the integration creates:
 
-- `switch.<scene_name_slug>`
+- `switch.scene_<scene_name_slug>`
 
 Example:
 - `scene.relaxed` (native HA scene)
-- `switch.relaxed` (stateful scene switch)
+- `switch.scene_relaxed` (stateful scene switch)
 
 The switch:
 - appears in the UI
@@ -122,7 +122,7 @@ Relative paths are resolved from your Home Assistant config directory.
 - Also used as a suppression window on turn-off to prevent OFF bounce.
 
 ### Number Tolerance (default: 4)
-**Allowed difference when comparing numeric attributes (brightness 0-255, position, etc.).**
+**Allowed difference when comparing numeric attributes (brightness, position, etc.). Range: 0–15.**
 
 Examples:
 - scene expects brightness 90, device reports 88 → match if tolerance ≥ 2

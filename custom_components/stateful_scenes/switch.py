@@ -1,7 +1,7 @@
 """Switch platform for Stateful Scenes.
 
 Each YAML-defined scene gets a corresponding switch entity:
-- switch.<scene_id> indicates whether the scene is currently *active*
+- switch.scene_<scene_id> indicates whether the scene is currently *active*
 - turning the switch *on* calls scene.turn_on for the matching Home Assistant
   scene entity
 
@@ -14,6 +14,7 @@ import logging
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.util import slugify
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -65,6 +66,14 @@ class StatefulSceneSwitch(SwitchEntity):
 
     async def async_will_remove_from_hass(self) -> None:
         self._mgr.unregister_entity(self._scene_id)
+
+
+    @property
+    def suggested_object_id(self) -> str | None:
+        """Suggest a stable entity_id: switch.scene_<scene_name_slug>."""
+        return f"scene_{slugify(self._def.name)}"
+
+
 
     @property
     def is_on(self) -> bool:

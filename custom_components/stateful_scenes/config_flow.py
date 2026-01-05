@@ -52,7 +52,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Conservative bounds for UI values (can be widened later without breaking).
 _SETTLE_TIME_RANGE = vol.Range(min=0.0, max=300.0)
-_NUMBER_TOL_RANGE = vol.Range(min=0, max=255)
+_NUMBER_TOL_RANGE = vol.Range(min=0, max=15)
 
 
 def _source_selector() -> SelectSelector:
