@@ -14,6 +14,8 @@ It adds:
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 DOMAIN = "stateful_scenes"
 
 # Config entry / options
@@ -49,10 +51,19 @@ DEFAULT_SETTLE_TIME = 1.5
 # tweaking (e.g., editing the config entry in storage), but it is intentionally
 # not exposed in the UI because it is usually too blunt a tool.
 
-# Source values
-SOURCE_CONFIGURATION_YAML = "configuration_yaml"
-SOURCE_SCENE_FILE = "scene_file"
-SOURCE_SCENE_DIR = "scene_dir"
+
+class SceneSource(StrEnum):
+    """Scene source options."""
+    
+    CONFIGURATION_YAML = "configuration_yaml"
+    SCENE_FILE = "scene_file"
+    SCENE_DIR = "scene_dir"
+
+
+# Legacy string constants for backward compatibility
+SOURCE_CONFIGURATION_YAML = SceneSource.CONFIGURATION_YAML
+SOURCE_SCENE_FILE = SceneSource.SCENE_FILE
+SOURCE_SCENE_DIR = SceneSource.SCENE_DIR
 
 # HA scene YAML keys
 KEY_ID = "id"
@@ -60,9 +71,8 @@ KEY_NAME = "name"
 KEY_ICON = "icon"
 KEY_ENTITIES = "entities"
 
+
 # Errors
-
-
 class StatefulScenesError(Exception):
     """Base error for this integration."""
 

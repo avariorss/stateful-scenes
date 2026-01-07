@@ -42,9 +42,7 @@ from .const import (
     DEFAULT_SETTLE_TIME,
     DEFAULT_SOURCE,
     DOMAIN,
-    SOURCE_CONFIGURATION_YAML,
-    SOURCE_SCENE_DIR,
-    SOURCE_SCENE_FILE,
+    SceneSource,
 )
 from .scene_loader import async_load_scenes
 
@@ -60,13 +58,16 @@ def _source_selector() -> SelectSelector:
         SelectSelectorConfig(
             options=[
                 SelectOptionDict(
-                    value=SOURCE_CONFIGURATION_YAML, label="From configuration.yaml"
+                    value=SceneSource.CONFIGURATION_YAML,
+                    label="From configuration.yaml",
                 ),
                 SelectOptionDict(
-                    value=SOURCE_SCENE_FILE, label="Specify scene YAML file"
+                    value=SceneSource.SCENE_FILE,
+                    label="Specify scene YAML file",
                 ),
                 SelectOptionDict(
-                    value=SOURCE_SCENE_DIR, label="Specify scene YAML directory"
+                    value=SceneSource.SCENE_DIR,
+                    label="Specify scene YAML directory",
                 ),
             ],
             mode="dropdown",
@@ -85,9 +86,8 @@ def _build_schema(*, defaults: dict[str, Any], selected_source: str) -> vol.Sche
 
     This keeps the UI stable while still supporting 3 load modes.
     """
-
     path_default: str
-    if selected_source == SOURCE_SCENE_DIR:
+    if selected_source == SceneSource.SCENE_DIR:
         path_default = str(defaults.get(CONF_SCENE_DIR, DEFAULT_SCENE_DIR))
     else:
         path_default = str(defaults.get(CONF_SCENE_FILE, DEFAULT_SCENE_FILE))
@@ -122,7 +122,6 @@ def _build_schema(*, defaults: dict[str, Any], selected_source: str) -> vol.Sche
 
 def _clean_user_input(user_input: dict[str, Any]) -> dict[str, Any]:
     """Normalize and drop irrelevant keys."""
-
     cleaned: dict[str, Any] = dict(user_input)
     source = cleaned.get(CONF_SOURCE, DEFAULT_SOURCE)
 
@@ -134,7 +133,7 @@ def _clean_user_input(user_input: dict[str, Any]) -> dict[str, Any]:
             cleaned[k] = v if v else None
 
     # Mirror path into scene_dir when directory mode is selected.
-    if source == SOURCE_SCENE_DIR:
+    if source == SceneSource.SCENE_DIR:
         cleaned[CONF_SCENE_DIR] = cleaned.get(CONF_SCENE_FILE) or DEFAULT_SCENE_DIR
 
     return cleaned
@@ -142,7 +141,6 @@ def _clean_user_input(user_input: dict[str, Any]) -> dict[str, Any]:
 
 async def _async_validate(hass, cleaned: dict[str, Any]) -> dict[str, str]:
     """Validate the user input by attempting to load scenes."""
-
     try:
         await async_load_scenes(
             hass,
@@ -170,7 +168,6 @@ class StatefulScenesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input=None):
         """Handle the initial step."""
-
         errors: dict[str, str] = {}
 
         if user_input is not None:

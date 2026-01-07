@@ -11,10 +11,11 @@ Key behaviors
 
 from __future__ import annotations
 
-import fnmatch
 import logging
+import re
 from contextlib import suppress
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, Callable
 
 from homeassistant.const import EVENT_CALL_SERVICE
@@ -36,7 +37,6 @@ POST_ACTIVATION_MAX_RETRIES = 1
 
 def _cancel(cb: Callable[[], None] | None) -> None:
     """Best-effort cancel/unsubscribe helper."""
-
     if cb is None:
         return
     with suppress(Exception):
@@ -92,9 +92,16 @@ class SceneManager:
         self._resolve_scene_entity_id = resolve_scene_entity_id
 
         self._exclude_enabled = bool(exclude_circadian)
-        self._exclude_patterns = [
-            p.strip() for p in str(circadian_pattern).split(",") if p.strip()
-        ]
+        
+        # Pre-compile exclusion patterns for efficiency
+        self._exclude_regex: re.Pattern[str] | None = None
+        if self._exclude_enabled:
+            patterns = [p.strip() for p in str(circadian_pattern).split(",") if p.strip()]
+            if patterns:
+                # Convert glob patterns to regex
+                import fnmatch
+                regex_patterns = '|'.join(f"(?:{fnmatch.translate(p)})" for p in patterns)
+                self._exclude_regex = re.compile(regex_patterns)
 
         self._listeners: list[Callable[[], None]] = []
         self._entities: dict[str, Any] = {}  # scene_id -> switch entity
@@ -155,15 +162,23 @@ class SceneManager:
     # ---------------------------------------------------------------------
     async def async_start(self) -> None:
         """Compute initial states and register listeners."""
+        # Pre-fetch all states once for efficiency during startup
+        all_entity_ids = list(self._index.keys())
+        state_map = {eid: self.hass.states.get(eid) for eid in all_entity_ids}
 
         for scene_id in list(self.scenes):
-            self._recompute_scene(scene_id, touched_entity_id=None, touched_state=None)
+            self._recompute_scene(
+                scene_id, 
+                touched_entity_id=None, 
+                touched_state=None,
+                state_override=state_map,
+            )
 
         if self._index:
             self._listeners.append(
                 async_track_state_change_event(
                     self.hass,
-                    list(self._index.keys()),
+                    all_entity_ids,
                     self._handle_member_state_change,
                 )
             )
@@ -217,16 +232,23 @@ class SceneManager:
         # Mark optimistic immediately, and re-evaluate after settle_time.
         self._set_scene_optimistic(scene_id, delay=self.settle_time)
 
-        await self.hass.services.async_call(
-            "scene",
-            "turn_on",
-            {"entity_id": ha_eid},
-            blocking=True,
-        )
+        try:
+            await self.hass.services.async_call(
+                "scene",
+                "turn_on",
+                {"entity_id": ha_eid},
+                blocking=True,
+            )
+        except Exception as err:
+            _LOGGER.error("Failed to activate scene %s: %s", scene_id, err)
+            # Force immediate re-evaluation on failure
+            _cancel(runtime.cancel_eval)
+            runtime.optimistic_until = None
+            if self._recompute_scene(scene_id, touched_entity_id=None, touched_state=None):
+                self._notify_entity(scene_id)
 
     async def async_turn_off_scene(self, scene_id: str) -> None:
         """Turn off all member entities of a scene (best-effort)."""
-
         runtime = self.scenes.get(scene_id)
         if not runtime:
             _LOGGER.error("Unknown scene_id=%s", scene_id)
@@ -259,13 +281,15 @@ class SceneManager:
     # ---------------------------------------------------------------------
     # Internal helpers
     # ---------------------------------------------------------------------
+    @lru_cache(maxsize=512)
     def _is_excluded(self, entity_id: str) -> bool:
-        if not self._exclude_enabled or not self._exclude_patterns:
+        """Check if entity matches exclusion pattern (cached for performance)."""
+        if self._exclude_regex is None:
             return False
-        return any(fnmatch.fnmatchcase(entity_id, pat) for pat in self._exclude_patterns)
+        return self._exclude_regex.match(entity_id) is not None
 
     def _apply_exclusions(self, scene: ParsedScene) -> ParsedScene:
-        if not self._exclude_enabled or not self._exclude_patterns:
+        if self._exclude_regex is None:
             return scene
 
         filtered = {
@@ -305,7 +329,6 @@ class SceneManager:
     @callback
     def _handle_member_state_change(self, event) -> None:
         """Triggered when any member entity changes."""
-
         entity_id = event.data.get("entity_id")
         if not isinstance(entity_id, str):
             return
@@ -341,9 +364,15 @@ class SceneManager:
     @callback
     def _handle_call_service(self, event) -> None:
         """Detect external scene.turn_on calls to apply an optimistic window."""
-
         data = event.data or {}
-        if data.get("domain") != "scene" or data.get("service") != "turn_on":
+        domain = data.get("domain")
+        service = data.get("service")
+        
+        # Validate types to prevent crashes on malformed events
+        if not isinstance(domain, str) or not isinstance(service, str):
+            return
+        
+        if domain != "scene" or service != "turn_on":
             return
 
         service_data = data.get("service_data") or {}
@@ -452,7 +481,6 @@ class SceneManager:
 
     async def async_evaluate_scene(self, scene_id: str) -> None:
         """Evaluate scene state at the end of the optimistic/suppression window."""
-
         runtime = self.scenes.get(scene_id)
         if runtime is None:
             return
@@ -491,16 +519,22 @@ class SceneManager:
         *,
         touched_entity_id: str | None,
         touched_state: State | None,
+        state_override: dict[str, State | None] | None = None,
     ) -> bool:
         """Recompute a scene's active state.
 
         Returns True if the scene's overall active state changed.
+        
+        Args:
+            scene_id: The scene to recompute
+            touched_entity_id: If provided, only update this entity's match status
+            touched_state: The new state for touched_entity_id
+            state_override: Optional state map for batch initialization
         """
-
         runtime = self.scenes[scene_id]
         definition = runtime.definition
 
-        states_get = self.hass.states.get
+        states_get = state_override.get if state_override else self.hass.states.get
         match = entity_matches
         opts = self.opts
 
@@ -518,27 +552,37 @@ class SceneManager:
                     runtime.ignored_count += 1
         else:
             expected = definition.entities.get(touched_entity_id)
-            if expected is not None:
-                old_v = runtime.matches.get(touched_entity_id)
-                st = touched_state if touched_state is not None else states_get(touched_entity_id)
-                new_v = match(st, expected, opts=opts)
+            if expected is None:
+                # This shouldn't happen, but be defensive
+                _LOGGER.warning(
+                    "Entity %s triggered update for scene %s but is not in definition",
+                    touched_entity_id,
+                    scene_id,
+                )
+                return False
+            
+            old_v = runtime.matches.get(touched_entity_id)
+            st = touched_state if touched_state is not None else states_get(touched_entity_id)
+            new_v = match(st, expected, opts=opts)
 
-                if new_v != old_v:
-                    if old_v is True:
-                        runtime.true_count -= 1
-                    elif old_v is False:
-                        runtime.false_count -= 1
-                    elif old_v is None and runtime.ignored_count > 0:
-                        runtime.ignored_count -= 1
+            if new_v != old_v:
+                # Decrement old
+                if old_v is True:
+                    runtime.true_count -= 1
+                elif old_v is False:
+                    runtime.false_count -= 1
+                else:  # was None
+                    runtime.ignored_count -= 1
 
-                    if new_v is True:
-                        runtime.true_count += 1
-                    elif new_v is False:
-                        runtime.false_count += 1
-                    else:
-                        runtime.ignored_count += 1
+                # Increment new
+                if new_v is True:
+                    runtime.true_count += 1
+                elif new_v is False:
+                    runtime.false_count += 1
+                else:  # is None
+                    runtime.ignored_count += 1
 
-                    runtime.matches[touched_entity_id] = new_v
+                runtime.matches[touched_entity_id] = new_v
 
         prev_active = runtime.is_active
 
@@ -562,7 +606,6 @@ class SceneManager:
         new_state: State | None,
     ) -> bool:
         """Return True if this update could affect match status."""
-
         if old_state is None or new_state is None:
             return True
 

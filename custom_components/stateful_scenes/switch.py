@@ -14,10 +14,10 @@ import logging
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.util import slugify
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import slugify
 
 from .const import DOMAIN
 from .scene_manager import SceneManager
@@ -30,7 +30,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    mgr: SceneManager = hass.data[DOMAIN]["entries"][entry.entry_id]
+    mgr: SceneManager = hass.data[DOMAIN]["entries"][entry.entry_id]["manager"]
 
     entities = [StatefulSceneSwitch(mgr, entry, scene_id) for scene_id in mgr.scenes]
     async_add_entities(entities)
@@ -67,13 +67,10 @@ class StatefulSceneSwitch(SwitchEntity):
     async def async_will_remove_from_hass(self) -> None:
         self._mgr.unregister_entity(self._scene_id)
 
-
     @property
     def suggested_object_id(self) -> str | None:
         """Suggest a stable entity_id: switch.scene_<scene_name_slug>."""
         return f"scene_{slugify(self._def.name)}"
-
-
 
     @property
     def is_on(self) -> bool:

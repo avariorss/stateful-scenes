@@ -10,10 +10,14 @@ entity are ignored.
 
 from __future__ import annotations
 
+import logging
+import math
 from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.core import State
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,22 +33,31 @@ def _is_number(v: Any) -> bool:
 
 def _values_match(expected: Any, actual: Any, *, tol: int) -> bool:
     """Compare expected vs actual with numeric tolerance support."""
+    # Fast path: exact match
+    if expected == actual:
+        return True
 
-    # Strings: case-insensitive (matches original integration behavior)
+    # Numeric tolerance (check FIRST to handle int vs float comparisons)
+    if _is_number(expected) and _is_number(actual):
+        exp_f, act_f = float(expected), float(actual)
+        
+        # Handle special float values (NaN, Infinity)
+        if not (math.isfinite(exp_f) and math.isfinite(act_f)):
+            return exp_f == act_f  # NaN != NaN, inf == inf
+        
+        return abs(exp_f - act_f) <= float(tol)
+
+    # String comparison (case-insensitive)
     if isinstance(expected, str) and isinstance(actual, str):
         return expected.casefold() == actual.casefold()
 
-    # Numeric tolerance
-    if _is_number(expected) and _is_number(actual):
-        return abs(float(expected) - float(actual)) <= float(tol)
-
-    # Lists / tuples: element-wise
+    # Lists / tuples: element-wise (same type required)
     if isinstance(expected, (list, tuple)) and isinstance(actual, (list, tuple)):
         if len(expected) != len(actual):
             return False
-        return all(_values_match(e, a, tol=tol) for e, a in zip(expected, actual))
+        return all(_values_match(e, a, tol=tol) for e, a in zip(expected, actual, strict=True))
 
-    # Dicts: compare keys present in expected
+    # Dicts: compare keys present in expected (same type required)
     if isinstance(expected, dict) and isinstance(actual, dict):
         for k, v in expected.items():
             if k not in actual:
@@ -53,7 +66,8 @@ def _values_match(expected: Any, actual: Any, *, tol: int) -> bool:
                 return False
         return True
 
-    return expected == actual
+    # Everything else: no match
+    return False
 
 
 def entity_matches(
@@ -67,7 +81,6 @@ def entity_matches(
     If ignore_unavailable=True and the entity is unavailable/unknown, we return
     None (ignored) instead of False.
     """
-
     if state is None:
         return None if opts.ignore_unavailable else False
 
@@ -99,8 +112,25 @@ def entity_matches(
         if attr_key == "state":
             continue
         if attr_key not in state.attributes:
+            _LOGGER.debug(
+                "Entity %s missing expected attribute '%s'",
+                state.entity_id,
+                attr_key,
+            )
             return False
-        if not _values_match(expected_val, state.attributes.get(attr_key), tol=opts.number_tolerance):
+        actual_val = state.attributes.get(attr_key)
+        matches = _values_match(expected_val, actual_val, tol=opts.number_tolerance)
+        if not matches:
+            _LOGGER.debug(
+                "Entity %s attribute '%s' mismatch: expected=%r (type=%s), actual=%r (type=%s), tolerance=%d",
+                state.entity_id,
+                attr_key,
+                expected_val,
+                type(expected_val).__name__,
+                actual_val,
+                type(actual_val).__name__,
+                opts.number_tolerance,
+            )
             return False
 
     return True
